@@ -3,11 +3,10 @@ jobs:
   build:
 
     docker:
-      - image: circleci/node:8
+      - image: circleci/openjdk:8-jdk-node-browsers
 
     environment:
       TZ: /usr/share/zoneinfo/America/Los_Angeles
-      TRAVIS_REPO_SLUG: facebook/react
 
     parallelism: 4
 
@@ -29,7 +28,7 @@ jobs:
 
       - run:
           name: Install Packages
-          command: yarn install
+          command: yarn install --frozen-lockfile
 
       - run:
           name: Test Packages
@@ -40,3 +39,15 @@ jobs:
           key: v1-node-{{ arch }}-{{ .Branch }}-{{ checksum "yarn.lock" }}
           paths:
             - node_modules
+
+      - store_artifacts:
+          path: ./node_modules.tgz
+
+      - store_artifacts:
+          path: ./build.tgz
+
+      - store_artifacts:
+          path: ./build/bundle-sizes.json
+
+      - store_artifacts:
+          path: ./scripts/error-codes/codes.json

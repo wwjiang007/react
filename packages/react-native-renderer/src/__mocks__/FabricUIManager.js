@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2013-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -9,7 +9,7 @@
 
 // Mock of the Native Hooks
 
-const invariant = require('fbjs/lib/invariant');
+import invariant from 'shared/invariant';
 
 const roots = new Map();
 const allocatedTags = new Set();
@@ -50,7 +50,7 @@ const RCTFabricUIManager = {
     viewName,
     rootTag,
     props,
-    instanceHandle,
+    eventTarget,
   ) {
     invariant(
       !allocatedTags.has(reactTag),
@@ -116,6 +116,59 @@ const RCTFabricUIManager = {
 
   completeRoot: jest.fn(function completeRoot(rootTag, newChildSet) {
     roots.set(rootTag, newChildSet);
+  }),
+
+  registerEventHandler: jest.fn(function registerEventHandler(callback) {}),
+
+  measure: jest.fn(function measure(node, callback) {
+    invariant(
+      typeof node === 'object',
+      'Expected node to be an object, was passed "%s"',
+      typeof node,
+    );
+    invariant(
+      typeof node.viewName === 'string',
+      'Expected node to be a host node.',
+    );
+    callback(10, 10, 100, 100, 0, 0);
+  }),
+  measureInWindow: jest.fn(function measureInWindow(node, callback) {
+    invariant(
+      typeof node === 'object',
+      'Expected node to be an object, was passed "%s"',
+      typeof node,
+    );
+    invariant(
+      typeof node.viewName === 'string',
+      'Expected node to be a host node.',
+    );
+    callback(10, 10, 100, 100);
+  }),
+  measureLayout: jest.fn(function measureLayout(
+    node,
+    relativeNode,
+    fail,
+    success,
+  ) {
+    invariant(
+      typeof node === 'object',
+      'Expected node to be an object, was passed "%s"',
+      typeof node,
+    );
+    invariant(
+      typeof node.viewName === 'string',
+      'Expected node to be a host node.',
+    );
+    invariant(
+      typeof relativeNode === 'object',
+      'Expected relative node to be an object, was passed "%s"',
+      typeof relativeNode,
+    );
+    invariant(
+      typeof relativeNode.viewName === 'string',
+      'Expected relative node to be a host node.',
+    );
+    success(1, 1, 100, 100);
   }),
 };
 

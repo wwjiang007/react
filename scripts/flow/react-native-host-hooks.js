@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2015-present, Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
@@ -8,6 +8,15 @@
  */
 
 /* eslint-disable */
+
+import type {
+  MeasureOnSuccessCallback,
+  MeasureInWindowOnSuccessCallback,
+  MeasureLayoutOnSuccessCallback,
+  ReactNativeBaseComponentViewConfig,
+  ViewConfigGetter,
+} from 'react-native-renderer/src/ReactNativeTypes';
+import type {RNTopLevelEventType} from 'events/TopLevelEventTypes';
 
 declare module 'deepDiffer' {
   declare module.exports: (one: any, two: any) => boolean;
@@ -94,7 +103,7 @@ declare module 'FabricUIManager' {
     viewName: string,
     rootTag: number,
     props: ?Object,
-    instanceHandle: Object,
+    eventTarget: Object,
   ): Object;
   declare function cloneNode(node: Object): Object;
   declare function cloneNodeWithNewChildren(node: Object): Object;
@@ -111,7 +120,36 @@ declare module 'FabricUIManager' {
   declare function createChildSet(rootTag: number): Object;
   declare function appendChildToSet(childSet: Object, childNode: Object): void;
   declare function completeRoot(rootTag: number, childSet: Object): void;
+  declare function registerEventHandler(
+    callback: (
+      eventTarget: null | Object,
+      type: RNTopLevelEventType,
+      payload: Object,
+    ) => void,
+  ): void;
+
+  declare function measure(
+    node: Node,
+    callback: MeasureOnSuccessCallback,
+  ): void;
+  declare function measureInWindow(
+    node: Node,
+    callback: MeasureInWindowOnSuccessCallback,
+  ): void;
+  declare function measureLayout(
+    node: Node,
+    relativeNode: Node,
+    onFail: () => void,
+    onSuccess: MeasureLayoutOnSuccessCallback,
+  ): void;
 }
+
+// This is needed for a short term solution.
+// See https://github.com/facebook/react/pull/15490 for more info
+declare var nativeFabricUIManager: {
+  measure(node: Node, callback: MeasureOnSuccessCallback): void,
+  measureInWindow(node: Node, callback: MeasureInWindowOnSuccessCallback): void,
+};
 
 declare module 'View' {
   declare module.exports: typeof React$Component;
@@ -142,11 +180,11 @@ declare module 'BatchedBridge' {
   declare function registerCallableModule(name: string, module: Object): void;
 }
 
-declare module 'CSComponent' {
-  declare type Element = any;
-  declare type Options<Instance> = any;
-}
+declare module 'ReactNativeViewConfigRegistry' {
+  declare var customBubblingEventTypes: Object;
+  declare var customDirectEventTypes: Object;
+  declare var eventTypes: Object;
 
-declare module 'CSStatefulComponent' {
-  declare function CSStatefulComponent(spec: any): any;
+  declare function register(name: string, callback: ViewConfigGetter): string;
+  declare function get(name: string): ReactNativeBaseComponentViewConfig;
 }
