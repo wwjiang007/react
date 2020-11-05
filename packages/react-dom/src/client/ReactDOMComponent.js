@@ -7,18 +7,12 @@
  * @flow
  */
 
-// TODO: direct imports like some-package/src/* are bad. Fix me.
-import {getCurrentFiberOwnerNameInDevOrNull} from 'react-reconciler/src/ReactCurrentFiber';
-import {registrationNameModules} from 'events/EventPluginRegistry';
-import warning from 'shared/warning';
-import {canUseDOM} from 'shared/ExecutionEnvironment';
-import warningWithoutStack from 'shared/warningWithoutStack';
-import type {ReactEventResponderEventType} from 'shared/ReactTypes';
-import type {DOMTopLevelEventType} from 'events/TopLevelEventTypes';
 import {
-  setListenToResponderEventTypes,
-  generateListeningKey,
-} from '../events/DOMEventResponderSystem';
+  registrationNameDependencies,
+  possibleRegistrationNames,
+} from '../events/EventRegistry';
+
+import {canUseDOM} from 'shared/ExecutionEnvironment';
 
 import {
   getValueForAttribute,
@@ -56,21 +50,6 @@ import {track} from './inputValueTracking';
 import setInnerHTML from './setInnerHTML';
 import setTextContent from './setTextContent';
 import {
-  TOP_ERROR,
-  TOP_INVALID,
-  TOP_LOAD,
-  TOP_RESET,
-  TOP_SUBMIT,
-  TOP_TOGGLE,
-} from '../events/DOMTopLevelEventTypes';
-import {
-  listenTo,
-  trapBubbledEvent,
-  getListeningSetForElement,
-} from '../events/ReactBrowserEventEmitter';
-import {trapEventForResponderEventSystem} from '../events/ReactDOMEventListener.js';
-import {mediaEventTypes} from '../events/DOMTopLevelEventTypes';
-import {
   createDangerousStringForStyles,
   setValueForStyles,
   validateShorthandPropertyCollisionInDev,
@@ -82,22 +61,26 @@ import {
   shouldRemoveAttribute,
 } from '../shared/DOMProperty';
 import assertValidProps from '../shared/assertValidProps';
-import {DOCUMENT_NODE, DOCUMENT_FRAGMENT_NODE} from '../shared/HTMLNodeType';
+import {DOCUMENT_NODE} from '../shared/HTMLNodeType';
 import isCustomComponent from '../shared/isCustomComponent';
 import possibleStandardNames from '../shared/possibleStandardNames';
 import {validateProperties as validateARIAProperties} from '../shared/ReactDOMInvalidARIAHook';
 import {validateProperties as validateInputProperties} from '../shared/ReactDOMNullInputValuePropHook';
 import {validateProperties as validateUnknownProperties} from '../shared/ReactDOMUnknownPropertyHook';
+import {REACT_OPAQUE_ID_TYPE} from 'shared/ReactSymbols';
 
-import {enableEventAPI} from 'shared/ReactFeatureFlags';
+import {enableTrustedTypesIntegration} from 'shared/ReactFeatureFlags';
+import {
+  mediaEventTypes,
+  listenToNonDelegatedEvent,
+} from '../events/DOMPluginEventSystem';
 
 let didWarnInvalidHydration = false;
-let didWarnShadyDOM = false;
+let didWarnScriptTags = false;
 
 const DANGEROUSLY_SET_INNER_HTML = 'dangerouslySetInnerHTML';
 const SUPPRESS_CONTENT_EDITABLE_WARNING = 'suppressContentEditableWarning';
 const SUPPRESS_HYDRATION_WARNING = 'suppressHydrationWarning';
-const HYDRATE_TOUCH_HIT_TARGET = 'hydrateTouchHitTarget';
 const AUTOFOCUS = 'autoFocus';
 const CHILDREN = 'children';
 const STYLE = 'style';
@@ -120,11 +103,6 @@ let normalizeHTML;
 
 if (__DEV__) {
   warnedUnknownTags = {
-    // Chrome is the only major browser not shipping <time>. But as of July
-    // 2017 it intends to ship it due to widespread usage. We intentionally
-    // *don't* warn for <time> even if it's unrecognized by Chrome because
-    // it soon will be, and many apps have been using it anyway.
-    time: true,
     // There are working polyfills for <dialog>. Let people use it.
     dialog: true,
     // Electron ships a custom <webview> tag to display external web content in
@@ -138,7 +116,10 @@ if (__DEV__) {
   validatePropertiesInDevelopment = function(type, props) {
     validateARIAProperties(type, props);
     validateInputProperties(type, props);
-    validateUnknownProperties(type, props, /* canUseEventSystem */ true);
+    validateUnknownProperties(type, props, {
+      registrationNameDependencies,
+      possibleRegistrationNames,
+    });
   };
 
   // IE 11 parses & normalizes the style attribute as opposed to other
@@ -180,8 +161,7 @@ if (__DEV__) {
       return;
     }
     didWarnInvalidHydration = true;
-    warningWithoutStack(
-      false,
+    console.error(
       'Text content did not match. Server: "%s" Client: "%s"',
       normalizedServerText,
       normalizedClientText,
@@ -206,8 +186,7 @@ if (__DEV__) {
       return;
     }
     didWarnInvalidHydration = true;
-    warningWithoutStack(
-      false,
+    console.error(
       'Prop `%s` did not match. Server: %s Client: %s',
       propName,
       JSON.stringify(normalizedServerValue),
@@ -224,13 +203,12 @@ if (__DEV__) {
     attributeNames.forEach(function(name) {
       names.push(name);
     });
-    warningWithoutStack(false, 'Extra attributes from the server: %s', names);
+    console.error('Extra attributes from the server: %s', names);
   };
 
   warnForInvalidEventListener = function(registrationName, listener) {
     if (listener === false) {
-      warning(
-        false,
+      console.error(
         'Expected `%s` listener to be a function, instead got `false`.\n\n' +
           'If you used to conditionally omit it with %s={condition && value}, ' +
           'pass %s={condition ? value : undefined} instead.',
@@ -239,8 +217,7 @@ if (__DEV__) {
         registrationName,
       );
     } else {
-      warning(
-        false,
+      console.error(
         'Expected `%s` listener to be a function, instead got a value of `%s` type.',
         registrationName,
         typeof listener,
@@ -267,19 +244,6 @@ if (__DEV__) {
   };
 }
 
-function ensureListeningTo(
-  rootContainerElement: Element | Node,
-  registrationName: string,
-): void {
-  const isDocumentOrFragment =
-    rootContainerElement.nodeType === DOCUMENT_NODE ||
-    rootContainerElement.nodeType === DOCUMENT_FRAGMENT_NODE;
-  const doc = isDocumentOrFragment
-    ? rootContainerElement
-    : rootContainerElement.ownerDocument;
-  listenTo(registrationName, doc);
-}
-
 function getOwnerDocumentFromRootContainer(
   rootContainerElement: Element | Document,
 ): Document {
@@ -295,7 +259,7 @@ export function trapClickOnNonInteractiveElement(node: HTMLElement) {
   // non-interactive elements, which means delegated click listeners do not
   // fire. The workaround for this bug involves attaching an empty click
   // listener on the target node.
-  // http://www.quirksmode.org/blog/archives/2010/09/click_event_del.html
+  // https://www.quirksmode.org/blog/archives/2010/09/click_event_del.html
   // Just set it using the onclick property so that we don't have to manage any
   // bookkeeping for it. Not sure if we need to clear it when the listener is
   // removed.
@@ -353,12 +317,14 @@ function setInitialDOMProperties(
       // We could have excluded it in the property list instead of
       // adding a special case here, but then it wouldn't be emitted
       // on server rendering (but we *do* want to emit it in SSR).
-    } else if (registrationNameModules.hasOwnProperty(propKey)) {
+    } else if (registrationNameDependencies.hasOwnProperty(propKey)) {
       if (nextProp != null) {
         if (__DEV__ && typeof nextProp !== 'function') {
           warnForInvalidEventListener(propKey, nextProp);
         }
-        ensureListeningTo(rootContainerElement, propKey);
+        if (propKey === 'onScroll') {
+          listenToNonDelegatedEvent('scroll', domElement);
+        }
       }
     } else if (nextProp != null) {
       setValueForProperty(domElement, propKey, nextProp, isCustomComponentTag);
@@ -411,19 +377,31 @@ export function createElement(
       isCustomComponentTag = isCustomComponent(type, props);
       // Should this check be gated by parent namespace? Not sure we want to
       // allow <SVG> or <mATH>.
-      warning(
-        isCustomComponentTag || type === type.toLowerCase(),
-        '<%s /> is using incorrect casing. ' +
-          'Use PascalCase for React components, ' +
-          'or lowercase for HTML elements.',
-        type,
-      );
+      if (!isCustomComponentTag && type !== type.toLowerCase()) {
+        console.error(
+          '<%s /> is using incorrect casing. ' +
+            'Use PascalCase for React components, ' +
+            'or lowercase for HTML elements.',
+          type,
+        );
+      }
     }
 
     if (type === 'script') {
       // Create the script via .innerHTML so its "parser-inserted" flag is
       // set to true and it does not execute
       const div = ownerDocument.createElement('div');
+      if (__DEV__) {
+        if (enableTrustedTypesIntegration && !didWarnScriptTags) {
+          console.error(
+            'Encountered a script tag while rendering React component. ' +
+              'Scripts inside React components are never executed when rendering ' +
+              'on the client. Consider using template tag instead ' +
+              '(https://developer.mozilla.org/en-US/docs/Web/HTML/Element/template).',
+          );
+          didWarnScriptTags = true;
+        }
+      }
       div.innerHTML = '<script><' + '/script>'; // eslint-disable-line
       // This is guaranteed to yield a script element.
       const firstChild = ((div.firstChild: any): HTMLScriptElement);
@@ -470,8 +448,7 @@ export function createElement(
         !Object.prototype.hasOwnProperty.call(warnedUnknownTags, type)
       ) {
         warnedUnknownTags[type] = true;
-        warning(
-          false,
+        console.error(
           'The tag <%s> is unrecognized in this browser. ' +
             'If you meant to render a React component, start its name with ' +
             'an uppercase letter.',
@@ -502,65 +479,60 @@ export function setInitialProperties(
   const isCustomComponentTag = isCustomComponent(tag, rawProps);
   if (__DEV__) {
     validatePropertiesInDevelopment(tag, rawProps);
-    if (
-      isCustomComponentTag &&
-      !didWarnShadyDOM &&
-      (domElement: any).shadyRoot
-    ) {
-      warning(
-        false,
-        '%s is using shady DOM. Using shady DOM with React can ' +
-          'cause things to break subtly.',
-        getCurrentFiberOwnerNameInDevOrNull() || 'A component',
-      );
-      didWarnShadyDOM = true;
-    }
   }
 
   // TODO: Make sure that we check isMounted before firing any of these events.
   let props: Object;
   switch (tag) {
+    case 'dialog':
+      listenToNonDelegatedEvent('cancel', domElement);
+      listenToNonDelegatedEvent('close', domElement);
+      props = rawProps;
+      break;
     case 'iframe':
     case 'object':
     case 'embed':
-      trapBubbledEvent(TOP_LOAD, domElement);
+      // We listen to this event in case to ensure emulated bubble
+      // listeners still fire for the load event.
+      listenToNonDelegatedEvent('load', domElement);
       props = rawProps;
       break;
     case 'video':
     case 'audio':
-      // Create listener for each media event
+      // We listen to these events in case to ensure emulated bubble
+      // listeners still fire for all the media events.
       for (let i = 0; i < mediaEventTypes.length; i++) {
-        trapBubbledEvent(mediaEventTypes[i], domElement);
+        listenToNonDelegatedEvent(mediaEventTypes[i], domElement);
       }
       props = rawProps;
       break;
     case 'source':
-      trapBubbledEvent(TOP_ERROR, domElement);
+      // We listen to this event in case to ensure emulated bubble
+      // listeners still fire for the error event.
+      listenToNonDelegatedEvent('error', domElement);
       props = rawProps;
       break;
     case 'img':
     case 'image':
     case 'link':
-      trapBubbledEvent(TOP_ERROR, domElement);
-      trapBubbledEvent(TOP_LOAD, domElement);
-      props = rawProps;
-      break;
-    case 'form':
-      trapBubbledEvent(TOP_RESET, domElement);
-      trapBubbledEvent(TOP_SUBMIT, domElement);
+      // We listen to these events in case to ensure emulated bubble
+      // listeners still fire for error and load events.
+      listenToNonDelegatedEvent('error', domElement);
+      listenToNonDelegatedEvent('load', domElement);
       props = rawProps;
       break;
     case 'details':
-      trapBubbledEvent(TOP_TOGGLE, domElement);
+      // We listen to this event in case to ensure emulated bubble
+      // listeners still fire for the toggle event.
+      listenToNonDelegatedEvent('toggle', domElement);
       props = rawProps;
       break;
     case 'input':
       ReactDOMInputInitWrapperState(domElement, rawProps);
       props = ReactDOMInputGetHostProps(domElement, rawProps);
-      trapBubbledEvent(TOP_INVALID, domElement);
-      // For controlled components we always need to ensure we're listening
-      // to onChange. Even if there is no listener.
-      ensureListeningTo(rootContainerElement, 'onChange');
+      // We listen to this event in case to ensure emulated bubble
+      // listeners still fire for the invalid event.
+      listenToNonDelegatedEvent('invalid', domElement);
       break;
     case 'option':
       ReactDOMOptionValidateProps(domElement, rawProps);
@@ -569,18 +541,16 @@ export function setInitialProperties(
     case 'select':
       ReactDOMSelectInitWrapperState(domElement, rawProps);
       props = ReactDOMSelectGetHostProps(domElement, rawProps);
-      trapBubbledEvent(TOP_INVALID, domElement);
-      // For controlled components we always need to ensure we're listening
-      // to onChange. Even if there is no listener.
-      ensureListeningTo(rootContainerElement, 'onChange');
+      // We listen to this event in case to ensure emulated bubble
+      // listeners still fire for the invalid event.
+      listenToNonDelegatedEvent('invalid', domElement);
       break;
     case 'textarea':
       ReactDOMTextareaInitWrapperState(domElement, rawProps);
       props = ReactDOMTextareaGetHostProps(domElement, rawProps);
-      trapBubbledEvent(TOP_INVALID, domElement);
-      // For controlled components we always need to ensure we're listening
-      // to onChange. Even if there is no listener.
-      ensureListeningTo(rootContainerElement, 'onChange');
+      // We listen to this event in case to ensure emulated bubble
+      // listeners still fire for the invalid event.
+      listenToNonDelegatedEvent('invalid', domElement);
       break;
     default:
       props = rawProps;
@@ -706,7 +676,7 @@ export function diffProperties(
       // Noop
     } else if (propKey === AUTOFOCUS) {
       // Noop. It doesn't work on updates anyway.
-    } else if (registrationNameModules.hasOwnProperty(propKey)) {
+    } else if (registrationNameDependencies.hasOwnProperty(propKey)) {
       // This is a special case. If any listener updates we need to ensure
       // that the "current" fiber pointer gets updated so we need a commit
       // to update this element.
@@ -715,7 +685,7 @@ export function diffProperties(
       }
     } else {
       // For all other deleted properties we add it to the queue. We use
-      // the whitelist in the commit phase instead.
+      // the allowed property list in the commit phase instead.
       (updatePayload = updatePayload || []).push(propKey, null);
     }
   }
@@ -777,17 +747,14 @@ export function diffProperties(
       const lastHtml = lastProp ? lastProp[HTML] : undefined;
       if (nextHtml != null) {
         if (lastHtml !== nextHtml) {
-          (updatePayload = updatePayload || []).push(propKey, '' + nextHtml);
+          (updatePayload = updatePayload || []).push(propKey, nextHtml);
         }
       } else {
         // TODO: It might be too late to clear this if we have children
         // inserted already.
       }
     } else if (propKey === CHILDREN) {
-      if (
-        lastProp !== nextProp &&
-        (typeof nextProp === 'string' || typeof nextProp === 'number')
-      ) {
+      if (typeof nextProp === 'string' || typeof nextProp === 'number') {
         (updatePayload = updatePayload || []).push(propKey, '' + nextProp);
       }
     } else if (
@@ -795,13 +762,15 @@ export function diffProperties(
       propKey === SUPPRESS_HYDRATION_WARNING
     ) {
       // Noop
-    } else if (registrationNameModules.hasOwnProperty(propKey)) {
+    } else if (registrationNameDependencies.hasOwnProperty(propKey)) {
       if (nextProp != null) {
         // We eagerly listen to this even though we haven't committed yet.
         if (__DEV__ && typeof nextProp !== 'function') {
           warnForInvalidEventListener(propKey, nextProp);
         }
-        ensureListeningTo(rootContainerElement, propKey);
+        if (propKey === 'onScroll') {
+          listenToNonDelegatedEvent('scroll', domElement);
+        }
       }
       if (!updatePayload && lastProp !== nextProp) {
         // This is a special case. If any listener updates we need to ensure
@@ -809,9 +778,18 @@ export function diffProperties(
         // to update this element.
         updatePayload = [];
       }
+    } else if (
+      typeof nextProp === 'object' &&
+      nextProp !== null &&
+      nextProp.$$typeof === REACT_OPAQUE_ID_TYPE
+    ) {
+      // If we encounter useOpaqueReference's opaque object, this means we are hydrating.
+      // In this case, call the opaque object's toString function which generates a new client
+      // ID so client and server IDs match and throws to rerender.
+      nextProp.toString();
     } else {
       // For any other property we always add it to the queue and then we
-      // filter it out using the whitelist during the commit.
+      // filter it out using the allowed property list during the commit.
       (updatePayload = updatePayload || []).push(propKey, nextProp);
     }
   }
@@ -898,74 +876,67 @@ export function diffHydratedProperties(
     suppressHydrationWarning = rawProps[SUPPRESS_HYDRATION_WARNING] === true;
     isCustomComponentTag = isCustomComponent(tag, rawProps);
     validatePropertiesInDevelopment(tag, rawProps);
-    if (
-      isCustomComponentTag &&
-      !didWarnShadyDOM &&
-      (domElement: any).shadyRoot
-    ) {
-      warning(
-        false,
-        '%s is using shady DOM. Using shady DOM with React can ' +
-          'cause things to break subtly.',
-        getCurrentFiberOwnerNameInDevOrNull() || 'A component',
-      );
-      didWarnShadyDOM = true;
-    }
   }
 
   // TODO: Make sure that we check isMounted before firing any of these events.
   switch (tag) {
+    case 'dialog':
+      listenToNonDelegatedEvent('cancel', domElement);
+      listenToNonDelegatedEvent('close', domElement);
+      break;
     case 'iframe':
     case 'object':
     case 'embed':
-      trapBubbledEvent(TOP_LOAD, domElement);
+      // We listen to this event in case to ensure emulated bubble
+      // listeners still fire for the load event.
+      listenToNonDelegatedEvent('load', domElement);
       break;
     case 'video':
     case 'audio':
-      // Create listener for each media event
+      // We listen to these events in case to ensure emulated bubble
+      // listeners still fire for all the media events.
       for (let i = 0; i < mediaEventTypes.length; i++) {
-        trapBubbledEvent(mediaEventTypes[i], domElement);
+        listenToNonDelegatedEvent(mediaEventTypes[i], domElement);
       }
       break;
     case 'source':
-      trapBubbledEvent(TOP_ERROR, domElement);
+      // We listen to this event in case to ensure emulated bubble
+      // listeners still fire for the error event.
+      listenToNonDelegatedEvent('error', domElement);
       break;
     case 'img':
     case 'image':
     case 'link':
-      trapBubbledEvent(TOP_ERROR, domElement);
-      trapBubbledEvent(TOP_LOAD, domElement);
-      break;
-    case 'form':
-      trapBubbledEvent(TOP_RESET, domElement);
-      trapBubbledEvent(TOP_SUBMIT, domElement);
+      // We listen to these events in case to ensure emulated bubble
+      // listeners still fire for error and load events.
+      listenToNonDelegatedEvent('error', domElement);
+      listenToNonDelegatedEvent('load', domElement);
       break;
     case 'details':
-      trapBubbledEvent(TOP_TOGGLE, domElement);
+      // We listen to this event in case to ensure emulated bubble
+      // listeners still fire for the toggle event.
+      listenToNonDelegatedEvent('toggle', domElement);
       break;
     case 'input':
       ReactDOMInputInitWrapperState(domElement, rawProps);
-      trapBubbledEvent(TOP_INVALID, domElement);
-      // For controlled components we always need to ensure we're listening
-      // to onChange. Even if there is no listener.
-      ensureListeningTo(rootContainerElement, 'onChange');
+      // We listen to this event in case to ensure emulated bubble
+      // listeners still fire for the invalid event.
+      listenToNonDelegatedEvent('invalid', domElement);
       break;
     case 'option':
       ReactDOMOptionValidateProps(domElement, rawProps);
       break;
     case 'select':
       ReactDOMSelectInitWrapperState(domElement, rawProps);
-      trapBubbledEvent(TOP_INVALID, domElement);
-      // For controlled components we always need to ensure we're listening
-      // to onChange. Even if there is no listener.
-      ensureListeningTo(rootContainerElement, 'onChange');
+      // We listen to this event in case to ensure emulated bubble
+      // listeners still fire for the invalid event.
+      listenToNonDelegatedEvent('invalid', domElement);
       break;
     case 'textarea':
       ReactDOMTextareaInitWrapperState(domElement, rawProps);
-      trapBubbledEvent(TOP_INVALID, domElement);
-      // For controlled components we always need to ensure we're listening
-      // to onChange. Even if there is no listener.
-      ensureListeningTo(rootContainerElement, 'onChange');
+      // We listen to this event in case to ensure emulated bubble
+      // listeners still fire for the invalid event.
+      listenToNonDelegatedEvent('invalid', domElement);
       break;
   }
 
@@ -977,7 +948,7 @@ export function diffHydratedProperties(
     for (let i = 0; i < attributes.length; i++) {
       const name = attributes[i].name.toLowerCase();
       switch (name) {
-        // Built-in SSR attribute is whitelisted
+        // Built-in SSR attribute is allowed
         case 'data-reactroot':
           break;
         // Controlled attributes are not validated
@@ -1027,15 +998,15 @@ export function diffHydratedProperties(
           updatePayload = [CHILDREN, '' + nextProp];
         }
       }
-    } else if (registrationNameModules.hasOwnProperty(propKey)) {
+    } else if (registrationNameDependencies.hasOwnProperty(propKey)) {
       if (nextProp != null) {
         if (__DEV__ && typeof nextProp !== 'function') {
           warnForInvalidEventListener(propKey, nextProp);
         }
-        ensureListeningTo(rootContainerElement, propKey);
+        if (propKey === 'onScroll') {
+          listenToNonDelegatedEvent('scroll', domElement);
+        }
       }
-    } else if (enableEventAPI && propKey === HYDRATE_TOUCH_HIT_TARGET) {
-      updatePayload = [STYLE, rawProps.style];
     } else if (
       __DEV__ &&
       // Convince Flow we've calculated it (it's DEV-only in this method.)
@@ -1059,12 +1030,11 @@ export function diffHydratedProperties(
       } else if (propKey === DANGEROUSLY_SET_INNER_HTML) {
         const serverHTML = domElement.innerHTML;
         const nextHtml = nextProp ? nextProp[HTML] : undefined;
-        const expectedHTML = normalizeHTML(
-          domElement,
-          nextHtml != null ? nextHtml : '',
-        );
-        if (expectedHTML !== serverHTML) {
-          warnForPropDifference(propKey, serverHTML, expectedHTML);
+        if (nextHtml != null) {
+          const expectedHTML = normalizeHTML(domElement, nextHtml);
+          if (expectedHTML !== serverHTML) {
+            warnForPropDifference(propKey, serverHTML, expectedHTML);
+          }
         }
       } else if (propKey === STYLE) {
         // $FlowFixMe - Should be inferred as not undefined.
@@ -1197,8 +1167,7 @@ export function warnForDeletedHydratableElement(
       return;
     }
     didWarnInvalidHydration = true;
-    warningWithoutStack(
-      false,
+    console.error(
       'Did not expect server HTML to contain a <%s> in <%s>.',
       child.nodeName.toLowerCase(),
       parentNode.nodeName.toLowerCase(),
@@ -1215,8 +1184,7 @@ export function warnForDeletedHydratableText(
       return;
     }
     didWarnInvalidHydration = true;
-    warningWithoutStack(
-      false,
+    console.error(
       'Did not expect server HTML to contain the text node "%s" in <%s>.',
       child.nodeValue,
       parentNode.nodeName.toLowerCase(),
@@ -1234,8 +1202,7 @@ export function warnForInsertedHydratedElement(
       return;
     }
     didWarnInvalidHydration = true;
-    warningWithoutStack(
-      false,
+    console.error(
       'Expected server HTML to contain a matching <%s> in <%s>.',
       tag,
       parentNode.nodeName.toLowerCase(),
@@ -1259,8 +1226,7 @@ export function warnForInsertedHydratedText(
       return;
     }
     didWarnInvalidHydration = true;
-    warningWithoutStack(
-      false,
+    console.error(
       'Expected server HTML to contain a matching text node for "%s" in <%s>.',
       text,
       parentNode.nodeName.toLowerCase(),
@@ -1284,59 +1250,4 @@ export function restoreControlledState(
       ReactDOMSelectRestoreControlledState(domElement, props);
       return;
   }
-}
-
-export function listenToEventResponderEventTypes(
-  eventTypes: Array<ReactEventResponderEventType>,
-  element: Element | Document,
-): void {
-  if (enableEventAPI) {
-    // Get the listening Set for this element. We use this to track
-    // what events we're listening to.
-    const listeningSet = getListeningSetForElement(element);
-
-    // Go through each target event type of the event responder
-    for (let i = 0, length = eventTypes.length; i < length; ++i) {
-      const targetEventType = eventTypes[i];
-      let topLevelType;
-      let passive = true;
-
-      // If no event config object is provided (i.e. - only a string),
-      // we default to enabling passive and not capture.
-      if (typeof targetEventType === 'string') {
-        topLevelType = targetEventType;
-      } else {
-        if (__DEV__) {
-          warning(
-            typeof targetEventType === 'object' && targetEventType !== null,
-            'Event Responder: invalid entry in event types array. ' +
-              'Entry must be string or an object. Instead, got %s.',
-            targetEventType,
-          );
-        }
-        const targetEventConfigObject = ((targetEventType: any): {
-          name: string,
-          passive?: boolean,
-        });
-        topLevelType = targetEventConfigObject.name;
-        if (targetEventConfigObject.passive !== undefined) {
-          passive = targetEventConfigObject.passive;
-        }
-      }
-      const listeningName = generateListeningKey(topLevelType, passive);
-      if (!listeningSet.has(listeningName)) {
-        trapEventForResponderEventSystem(
-          element,
-          ((topLevelType: any): DOMTopLevelEventType),
-          passive,
-        );
-        listeningSet.add(listeningName);
-      }
-    }
-  }
-}
-
-// We can remove this once the event API is stable and out of a flag
-if (enableEventAPI) {
-  setListenToResponderEventTypes(listenToEventResponderEventTypes);
 }

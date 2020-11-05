@@ -14,9 +14,10 @@ const stream = require('stream');
 module.exports = function(initModules) {
   let ReactDOM;
   let ReactDOMServer;
+  let ReactTestUtils;
 
   function resetModules() {
-    ({ReactDOM, ReactDOMServer} = initModules());
+    ({ReactDOM, ReactDOMServer, ReactTestUtils} = initModules());
   }
 
   function shouldUseDocument(reactElement) {
@@ -48,9 +49,13 @@ module.exports = function(initModules) {
   function asyncReactDOMRender(reactElement, domElement, forceHydrate) {
     return new Promise(resolve => {
       if (forceHydrate) {
-        ReactDOM.hydrate(reactElement, domElement);
+        ReactTestUtils.unstable_concurrentAct(() => {
+          ReactDOM.hydrate(reactElement, domElement);
+        });
       } else {
-        ReactDOM.render(reactElement, domElement);
+        ReactTestUtils.unstable_concurrentAct(() => {
+          ReactDOM.render(reactElement, domElement);
+        });
       }
       // We can't use the callback for resolution because that will not catch
       // errors. They're thrown.
@@ -64,7 +69,7 @@ module.exports = function(initModules) {
       console.error.calls.reset();
     } else {
       // TODO: Rewrite tests that use this helper to enumerate expected errors.
-      // This will enable the helper to use the .toWarnDev() matcher instead of spying.
+      // This will enable the helper to use the .toErrorDev() matcher instead of spying.
       spyOnDev(console, 'error');
     }
 
@@ -139,9 +144,11 @@ module.exports = function(initModules) {
   async function renderIntoStream(reactElement, errorCount = 0) {
     return await expectErrors(
       () =>
-        new Promise(resolve => {
-          let writable = new DrainWritable();
-          ReactDOMServer.renderToNodeStream(reactElement).pipe(writable);
+        new Promise((resolve, reject) => {
+          const writable = new DrainWritable();
+          const s = ReactDOMServer.renderToNodeStream(reactElement);
+          s.on('error', e => reject(e));
+          s.pipe(writable);
           writable.on('finish', () => resolve(writable.buffer));
         }),
       errorCount,
@@ -169,7 +176,7 @@ module.exports = function(initModules) {
     const markup = await renderIntoString(element, errorCount);
     resetModules();
 
-    let container = getContainerFromMarkup(element, markup);
+    const container = getContainerFromMarkup(element, markup);
     let serverNode = container.firstChild;
 
     const firstClientNode = await renderIntoDom(
@@ -200,7 +207,7 @@ module.exports = function(initModules) {
   const clientRenderOnBadMarkup = async (element, errorCount = 0) => {
     // First we render the top of bad mark up.
 
-    let container = getContainerFromMarkup(
+    const container = getContainerFromMarkup(
       element,
       shouldUseDocument(element)
         ? '<html><body><div id="badIdWhichWillCauseMismatch" /></body></html>'

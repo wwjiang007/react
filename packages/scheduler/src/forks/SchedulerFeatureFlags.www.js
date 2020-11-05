@@ -6,4 +6,10 @@
  *
  */
 
-export const enableSchedulerDebugging = true;
+export const {
+  enableIsInputPending,
+  enableSchedulerDebugging,
+  enableProfiling: enableProfilingFeatureFlag,
+} = require('packages/scheduler/src/SchedulerFeatureFlags');
+
+export const enableProfiling = __PROFILE__ && enableProfilingFeatureFlag;

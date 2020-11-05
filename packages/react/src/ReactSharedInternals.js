@@ -10,25 +10,19 @@ import ReactCurrentDispatcher from './ReactCurrentDispatcher';
 import ReactCurrentBatchConfig from './ReactCurrentBatchConfig';
 import ReactCurrentOwner from './ReactCurrentOwner';
 import ReactDebugCurrentFrame from './ReactDebugCurrentFrame';
+import IsSomeRendererActing from './IsSomeRendererActing';
 
 const ReactSharedInternals = {
   ReactCurrentDispatcher,
   ReactCurrentBatchConfig,
   ReactCurrentOwner,
-  // used by act()
-  ReactShouldWarnActingUpdates: {current: false},
+  IsSomeRendererActing,
   // Used by renderers to avoid bundling object-assign twice in UMD bundles:
   assign,
 };
 
 if (__DEV__) {
-  Object.assign(ReactSharedInternals, {
-    // These should not be included in production.
-    ReactDebugCurrentFrame,
-    // Shim for React DOM 16.0.0 which still destructured (but not used) this.
-    // TODO: remove in React 17.0.
-    ReactComponentTreeHook: {},
-  });
+  ReactSharedInternals.ReactDebugCurrentFrame = ReactDebugCurrentFrame;
 }
 
 export default ReactSharedInternals;

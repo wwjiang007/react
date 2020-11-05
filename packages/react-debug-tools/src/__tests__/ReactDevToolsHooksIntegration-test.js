@@ -133,7 +133,7 @@ describe('React hooks DevTools integration', () => {
   });
 
   // This test case is based on an open source bug report:
-  // facebookincubator/redux-react-hook/issues/34#issuecomment-466693787
+  // https://github.com/facebookincubator/redux-react-hook/issues/34#issuecomment-466693787
   it('should handle interleaved stateful hooks (e.g. useState) and non-stateful hooks (e.g. useContext)', () => {
     const MyContext = React.createContext(1);
 
@@ -180,7 +180,7 @@ describe('React hooks DevTools integration', () => {
     }
   });
 
-  it('should support overriding suspense in sync mode', () => {
+  it('should support overriding suspense in legacy mode', () => {
     if (__DEV__) {
       // Lock the first render
       setSuspenseHandler(() => true);
@@ -265,6 +265,7 @@ describe('React hooks DevTools integration', () => {
       // Release the lock
       setSuspenseHandler(() => false);
       scheduleUpdate(fiber); // Re-render
+      Scheduler.unstable_flushAll();
       expect(renderer.toJSON().children).toEqual(['Done']);
       scheduleUpdate(fiber); // Re-render
       expect(renderer.toJSON().children).toEqual(['Done']);

@@ -7,14 +7,4 @@
 
 'use strict';
 
-export * from './src/Scheduler';
-
-export {
-  unstable_flushWithoutYielding,
-  unstable_flushNumberOfYields,
-  unstable_flushExpired,
-  unstable_clearYields,
-  flushAll,
-  yieldValue,
-  advanceTime,
-} from './src/SchedulerHostConfig.js';
+export * from './src/forks/SchedulerMock';
